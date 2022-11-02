@@ -14,6 +14,10 @@ eureka_client.init(eureka_server="http://localhost:8761/eureka",
                                 app_name="cleaning-api",
                                 instance_port=8082)
 
+@app.get("/cleaning-api/test")
+async def test():
+    return {"message":"test"}
+
 @app.post("/cleaning-api/missing-value/find")
 async def find_mv(request: Request):
     req = await request.json()
@@ -21,6 +25,7 @@ async def find_mv(request: Request):
     na_df = req_df[req_df.isna().any(axis=1)]
     na_df = na_df.replace({np.nan:None})
     return df_to_response(req['column'], na_df)
+
 
 @app.post("/cleaning-api/missing-value/run")
 async def run_mv(request: Request, method: int, idx_col: Union[str, None] = None):
