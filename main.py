@@ -35,7 +35,7 @@ async def run_mv(request: Request, method: int, idx_col: Union[str, None] = None
     na_df = na_df.replace({np.nan: None})
     if(method == 0):
         column_df = pd.json_normalize(req['column'])
-        num_type_col = column_df.where(column_df['type'] == 'DOUBLE' or column_df['type'] == 'INT').dropna()
+        num_type_col = column_df.where(column_df['type'] == 'DOUBLE').dropna()
         if (idx_col in num_type_col):
             num_type_col.remove(idx_col)
         data_col_list = list(num_type_col['name'])
@@ -149,3 +149,29 @@ async def pearson_correlation(request: Request):
             cor_dict[data_col_list[i]][data_col_list[j]] = cor
             cor_dict[data_col_list[j]][data_col_list[i]] = cor
     return cor_dict
+
+@app.post("/cleaning-api/std")
+async def std(request: Request):
+    req = await request.json()
+    req_df = pd.json_normalize(req['data'])
+    column_df = pd.json_normalize(req['column'])
+    num_type_col = column_df.where(column_df['type'] == 'DOUBLE').dropna()
+    data_col_list = list(num_type_col['name'])
+    std_dict = {}
+    std = req_df.std()
+    for i in range(0, len(data_col_list)):
+        std_dict[data_col_list[i]] = round(std[data_col_list[i]],3)
+    return std_dict
+
+@app.post("/cleaning-api/mean")
+async def mean(request: Request):
+    req = await request.json()
+    req_df = pd.json_normalize(req['data'])
+    column_df = pd.json_normalize(req['column'])
+    num_type_col = column_df.where(column_df['type'] == 'DOUBLE').dropna()
+    data_col_list = list(num_type_col['name'])
+    mean_dict = {}
+    mean = req_df.mean()
+    for i in range(0, len(data_col_list)):
+        mean_dict[data_col_list[i]] = round(mean[data_col_list[i]],3)
+    return mean_dict
