@@ -35,7 +35,7 @@ async def run_mv(request: Request, method: int, idx_col: Union[str, None] = None
     na_df = na_df.replace({np.nan: None})
     if(method == 0):
         column_df = pd.json_normalize(req['column'])
-        num_type_col = column_df.where(column_df['type'] == 'DOUBLE').dropna()
+        num_type_col = column_df.where(column_df['type'] == 'DOUBLE' or column_df['type'] == 'INT').dropna()
         if (idx_col in num_type_col):
             num_type_col.remove(idx_col)
         data_col_list = list(num_type_col['name'])
