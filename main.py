@@ -11,8 +11,8 @@ from scipy.stats import pearsonr
 app = FastAPI()
 
 eureka_client.init(eureka_server="http://localhost:8761/eureka",
-                                app_name="cleaning-api",
-                                instance_port=8082)
+                                app_name="preprocessing-api",
+                                instance_port=8083)
 
 @app.get("/cleaning-api/test")
 async def test():
