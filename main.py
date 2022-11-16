@@ -136,15 +136,25 @@ def df_to_response(column, df):
 async def pearson_correlation(request: Request):
     req = await request.json()
     req_df = pd.json_normalize(req['data'])
+    req_df =  req_df.fillna(req_df.interpolate())
     req_df = req_df.dropna(axis=0)
+
+    print(req_df)
     column_df = pd.json_normalize(req['column'])
-    num_type_col = column_df.where(column_df['type'] == 'DOUBLE').dropna()
+    num_type_list = ['DOUBLE', 'FLOAT', 'INT']
+    num_type_col = column_df.where(column_df['type'].isin(num_type_list)).dropna()
     data_col_list = list(num_type_col['name'])
     cor_dict = {}
     for i in range(0, len(data_col_list)):
         cor_dict[data_col_list[i]] = {}
     for i in range(0, len(data_col_list)):
         for j in range(i + 1, len(data_col_list)):
+            if (data_col_list[i] not in req_df.columns or data_col_list[j] not in req_df.columns ):
+                cor_dict[data_col_list[i]][data_col_list[j]] = None
+                cor_dict[data_col_list[j]][data_col_list[i]] = None
+                continue
+            # print(req_df[data_col_list[i]])
+            # print(req_df[data_col_list[j]])
             cor = round(pearsonr(req_df[data_col_list[i]], req_df[data_col_list[j]])[0],3)
             cor_dict[data_col_list[i]][data_col_list[j]] = cor
             cor_dict[data_col_list[j]][data_col_list[i]] = cor
@@ -155,11 +165,14 @@ async def std(request: Request):
     req = await request.json()
     req_df = pd.json_normalize(req['data'])
     column_df = pd.json_normalize(req['column'])
-    num_type_col = column_df.where(column_df['type'] == 'DOUBLE').dropna()
+    num_type_list = ['DOUBLE', 'FLOAT', 'INT']
+    num_type_col = column_df.where(column_df['type'].isin(num_type_list)).dropna()
     data_col_list = list(num_type_col['name'])
     std_dict = {}
     std = req_df.std()
     for i in range(0, len(data_col_list)):
+        if (data_col_list[i] not in std.index):
+            std[data_col_list[i]] = 0.0
         std_dict[data_col_list[i]] = round(std[data_col_list[i]],3)
     return std_dict
 
@@ -168,10 +181,35 @@ async def mean(request: Request):
     req = await request.json()
     req_df = pd.json_normalize(req['data'])
     column_df = pd.json_normalize(req['column'])
-    num_type_col = column_df.where(column_df['type'] == 'DOUBLE').dropna()
+    num_type_list = ['DOUBLE', 'FLOAT', 'INT']
+    num_type_col = column_df.where(column_df['type'].isin(num_type_list)).dropna()
     data_col_list = list(num_type_col['name'])
     mean_dict = {}
     mean = req_df.mean()
     for i in range(0, len(data_col_list)):
+        if (data_col_list[i] not in mean.index):
+            mean[data_col_list[i]] = 0.0
         mean_dict[data_col_list[i]] = round(mean[data_col_list[i]],3)
     return mean_dict
+
+
+@app.post("/cleaning-api/visualize")
+async def visualize(request: Request, idx_col):
+    req = await request.json()
+    req_df = pd.json_normalize(req['data'])
+    req_df = req_df.replace({np.nan: None})
+    column_df = pd.json_normalize(req['column'])
+    num_type_list = ['DOUBLE', 'FLOAT', 'INT']
+    num_type_col = column_df.where(column_df['type'].isin(num_type_list)).dropna()
+    data_col_list = list(num_type_col['name'])
+    req_dict = {}
+    if(idx_col not in req_df.columns):
+        req_dict[idx_col] = list()
+    else:
+        req_dict[idx_col] = list(req_df[idx_col])
+    for i in range(0, len(data_col_list)):
+        if (data_col_list[i] not in req_df.columns):
+            req_dict[data_col_list[i]] = list()
+        else:
+            req_dict[data_col_list[i]] = list(req_df[data_col_list[i]])
+    return req_dict
