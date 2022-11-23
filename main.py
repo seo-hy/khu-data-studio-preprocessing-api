@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 from typing import Union
 import pandas as pd
 import numpy as np
@@ -21,16 +21,50 @@ async def test():
 @app.post("/cleaning-api/missing-value/find")
 async def find_mv(request: Request):
     req = await request.json()
+    date_time_column = req['dateTimeColumn']
     req_df = pd.json_normalize(req['data'])
+    if len(req_df) == 0:
+        raise HTTPException(status_code=400, detail="empty data")
+    new_col = list()
+    new_col.append(date_time_column)
+    for i in range(1, len(req_df.columns)):
+        new_col.append(req_df.columns[i].replace("value.", ""))
+    req_df.columns = new_col
     na_df = req_df[req_df.isna().any(axis=1)]
     na_df = na_df.replace({np.nan:None})
-    return df_to_response(req['column'], na_df)
+    return to_response(date_time_column,req['column'], na_df)
 
+
+@app.post("/cleaning-api/missing-value/delete")
+async def delete_missing_value(request: Request):
+    req = await request.json()
+    date_time_column = req['dateTimeColumn']
+    req_df = pd.json_normalize(req['data'])
+    if len(req_df) == 0:
+        raise HTTPException(status_code=400, detail="empty data")
+    new_col = list()
+    new_col.append(date_time_column)
+    for i in range(1, len(req_df.columns)):
+        new_col.append(req_df.columns[i].replace("value.", ""))
+    req_df.columns = new_col
+    na_df = req_df[req_df.isna().any(axis=1)]
+    res = {}
+    res['deleteDate'] = list(na_df['created_at'])
+    res['run'] = to_response(date_time_column, req['column'], na_df.dropna(axis=0))
+    return res
 
 @app.post("/cleaning-api/missing-value/run")
-async def run_mv(request: Request, method: int, idx_col: Union[str, None] = None):
+async def run_mv(request: Request, method: int):
     req = await request.json()
+    date_time_column = req['dateTimeColumn']
     req_df = pd.json_normalize(req['data'])
+    if len(req_df) == 0:
+        raise HTTPException(status_code=400, detail="empty data")
+    new_col = list()
+    new_col.append(date_time_column)
+    for i in range(1, len(req_df.columns)):
+        new_col.append(req_df.columns[i].replace("value.", ""))
+    req_df.columns = new_col
     na_df = req_df[req_df.isna().any(axis=1)]
     na_df = na_df.replace({np.nan: None})
     if(method == 0):
@@ -109,6 +143,25 @@ async def run_mv(request: Request, method: int, idx_col: Union[str, None] = None
         res['run'] = run
         return res
 
+def to_response(date_time_column, column, df):
+    data = list()
+    for i in df.index:
+        obj = {}
+        value = {}
+        for col in column:
+            if (df.loc[i, col['name']] is None):
+                value[col['name']] = None
+            else:
+                value[col['name']] = float(df.loc[i, col['name']])
+        obj['date'] = df.loc[i, date_time_column]
+        obj['value'] = value
+        data.append(obj)
+    res = {}
+    res['dateTimeColumn'] = date_time_column
+    res['column'] = column
+    res['data'] = data
+    return res
+
 def df_to_response(column, df):
     type_dict = {}
     for col in column:
@@ -141,75 +194,104 @@ async def pearson_correlation(request: Request):
 
     print(req_df)
     column_df = pd.json_normalize(req['column'])
-    num_type_list = ['DOUBLE', 'FLOAT', 'INT']
-    num_type_col = column_df.where(column_df['type'].isin(num_type_list)).dropna()
-    data_col_list = list(num_type_col['name'])
+    column_list = list(column_df['name'])
     cor_dict = {}
-    for i in range(0, len(data_col_list)):
-        cor_dict[data_col_list[i]] = {}
-    for i in range(0, len(data_col_list)):
-        for j in range(i + 1, len(data_col_list)):
-            if (data_col_list[i] not in req_df.columns or data_col_list[j] not in req_df.columns ):
-                cor_dict[data_col_list[i]][data_col_list[j]] = None
-                cor_dict[data_col_list[j]][data_col_list[i]] = None
+    for i in range(0, len(column_list)):
+        cor_dict[column_list[i]] = {}
+    for i in range(0, len(column_list)):
+        for j in range(i + 1, len(column_list)):
+            if (column_list[i] not in req_df.columns or column_list[j] not in req_df.columns ):
+                cor_dict[column_list[i]][column_list[j]] = None
+                cor_dict[column_list[j]][column_list[i]] = None
                 continue
-            # print(req_df[data_col_list[i]])
-            # print(req_df[data_col_list[j]])
-            cor = round(pearsonr(req_df[data_col_list[i]], req_df[data_col_list[j]])[0],3)
-            cor_dict[data_col_list[i]][data_col_list[j]] = cor
-            cor_dict[data_col_list[j]][data_col_list[i]] = cor
+            cor = round(pearsonr(req_df[column_list[i]], req_df[column_list[j]])[0],3)
+            cor_dict[column_list[i]][column_list[j]] = cor
+            cor_dict[column_list[j]][column_list[i]] = cor
     return cor_dict
 
 @app.post("/cleaning-api/std")
 async def std(request: Request):
     req = await request.json()
     req_df = pd.json_normalize(req['data'])
+    new_col = list()
+    for c in req_df.columns:
+        new_col.append(c.replace("value.", ""))
+    req_df.columns = new_col
     column_df = pd.json_normalize(req['column'])
-    num_type_list = ['DOUBLE', 'FLOAT', 'INT']
-    num_type_col = column_df.where(column_df['type'].isin(num_type_list)).dropna()
-    data_col_list = list(num_type_col['name'])
+    column_list = list(column_df['name'])
     std_dict = {}
     std = req_df.std()
-    for i in range(0, len(data_col_list)):
-        if (data_col_list[i] not in std.index):
-            std[data_col_list[i]] = 0.0
-        std_dict[data_col_list[i]] = round(std[data_col_list[i]],3)
+    for i in range(0, len(column_list)):
+        if (column_list[i] not in std.index):
+            std[column_list[i]] = 0.0
+        std_dict[column_list[i]] = round(std[column_list[i]],3)
     return std_dict
 
 @app.post("/cleaning-api/mean")
 async def mean(request: Request):
     req = await request.json()
     req_df = pd.json_normalize(req['data'])
+    new_col = list()
+    for c in req_df.columns:
+        new_col.append(c.replace("value.", ""))
+    req_df.columns = new_col
     column_df = pd.json_normalize(req['column'])
-    num_type_list = ['DOUBLE', 'FLOAT', 'INT']
-    num_type_col = column_df.where(column_df['type'].isin(num_type_list)).dropna()
-    data_col_list = list(num_type_col['name'])
+    column_list = list(column_df['name'])
     mean_dict = {}
     mean = req_df.mean()
-    for i in range(0, len(data_col_list)):
-        if (data_col_list[i] not in mean.index):
-            mean[data_col_list[i]] = 0.0
-        mean_dict[data_col_list[i]] = round(mean[data_col_list[i]],3)
+    for i in range(0, len(column_list)):
+        if (column_list[i] not in mean.index):
+            mean[column_list[i]] = 0.0
+        mean_dict[column_list[i]] = round(mean[column_list[i]],3)
     return mean_dict
 
 
 @app.post("/cleaning-api/visualize")
-async def visualize(request: Request, idx_col):
+async def visualize(request: Request):
     req = await request.json()
+    date_time_column = req['dateTimeColumn']
     req_df = pd.json_normalize(req['data'])
     req_df = req_df.replace({np.nan: None})
     column_df = pd.json_normalize(req['column'])
-    num_type_list = ['DOUBLE', 'FLOAT', 'INT']
-    num_type_col = column_df.where(column_df['type'].isin(num_type_list)).dropna()
-    data_col_list = list(num_type_col['name'])
+    column_list = list(column_df['name'])
     req_dict = {}
-    if(idx_col not in req_df.columns):
-        req_dict[idx_col] = list()
+    if len(req_df.columns) == 0:
+        req_dict[date_time_column] = list()
+        for i in range(0, len(column_list)):
+            req_dict[column_list[i]] = list()
     else:
-        req_dict[idx_col] = list(req_df[idx_col])
-    for i in range(0, len(data_col_list)):
-        if (data_col_list[i] not in req_df.columns):
-            req_dict[data_col_list[i]] = list()
-        else:
-            req_dict[data_col_list[i]] = list(req_df[data_col_list[i]])
+        new_col = list()
+        new_col.append(date_time_column)
+        for i in range(1, len(req_df.columns)):
+            new_col.append(req_df.columns[i].replace("value.", ""))
+        req_df.columns = new_col
+        req_dict[date_time_column] = list(req_df[date_time_column])
+        for i in range(0, len(column_list)):
+            req_dict[column_list[i]] = list(req_df[column_list[i]])
     return req_dict
+
+@app.post("/cleaning-api/denoise")
+async def delete_missing_value(request: Request, com: int):
+    req = await request.json()
+    date_time_column = req['dateTimeColumn']
+    if len(req['denoiseColumn']) == 0:
+        raise HTTPException(status_code=400, detail="column required")
+    denoise_col_df = pd.json_normalize(req['denoiseColumn'])
+    req_df = pd.json_normalize(req['data'])
+    if len(req_df) == 0:
+        raise HTTPException(status_code=400, detail="empty data")
+    new_col = list()
+    new_col.append(date_time_column)
+    for i in range(1, len(req_df.columns)):
+        new_col.append(req_df.columns[i].replace("value.", ""))
+    denoise_col_list = list(denoise_col_df['name'])
+    req_df.columns = new_col
+    req_df = req_df.fillna(method="ffill")
+    req_df = req_df.fillna(method="bfill")
+    ema_df = pd.DataFrame()
+    ema_df[date_time_column] = req_df[date_time_column]
+    for name in denoise_col_list:
+        ema = pd.DataFrame(req_df[name]).ewm(com).mean()
+        ema_df[name] = ema[name]
+    print(req['column'])
+    return to_response(date_time_column, req['denoiseColumn'], ema_df)
