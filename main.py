@@ -3,6 +3,7 @@ from typing import Union
 import pandas as pd
 import numpy as np
 import py_eureka_client.eureka_client as eureka_client
+from kafka import KafkaProducer
 
 from statsmodels.tsa.api import VAR
 
@@ -13,6 +14,10 @@ app = FastAPI()
 eureka_client.init(eureka_server="http://localhost:8761/eureka",
                                 app_name="preprocessing-api",
                                 instance_port=8083)
+producer = KafkaProducer(
+    bootstrap_servers=["localhost:9092"],
+    value_serializer=lambda x: x.encode("utf-8")
+)
 
 @app.get("/cleaning-api/test")
 async def test():
@@ -24,7 +29,11 @@ async def find_mv(request: Request):
     date_time_column = req['dateTimeColumn']
     req_df = pd.json_normalize(req['data'])
     if len(req_df) == 0:
-        raise HTTPException(status_code=400, detail="empty data")
+        res = {}
+        res['dateTimeColumn'] = date_time_column
+        res['column'] = req['column']
+        res['data'] = list()
+        return res
     new_col = list()
     new_col.append(date_time_column)
     for i in range(1, len(req_df.columns)):
@@ -52,9 +61,8 @@ async def delete_missing_value(request: Request):
     res['deleteDate'] = list(na_df['created_at'])
     res['run'] = to_response(date_time_column, req['column'], na_df.dropna(axis=0))
     return res
-
-@app.post("/cleaning-api/missing-value/run")
-async def run_mv(request: Request, method: int):
+@app.post("/cleaning-api/missing-value/interpolate")
+async def interpolate(request: Request):
     req = await request.json()
     date_time_column = req['dateTimeColumn']
     req_df = pd.json_normalize(req['data'])
@@ -65,83 +73,93 @@ async def run_mv(request: Request, method: int):
     for i in range(1, len(req_df.columns)):
         new_col.append(req_df.columns[i].replace("value.", ""))
     req_df.columns = new_col
-    na_df = req_df[req_df.isna().any(axis=1)]
-    na_df = na_df.replace({np.nan: None})
-    if(method == 0):
-        column_df = pd.json_normalize(req['column'])
-        num_type_col = column_df.where(column_df['type'] == 'DOUBLE').dropna()
-        if (idx_col in num_type_col):
-            num_type_col.remove(idx_col)
-        data_col_list = list(num_type_col['name'])
-        null_index_dict = {}
-        for name in num_type_col['name']:
-            li = list(req_df[name][req_df[name].isnull()].index)
-            if (len(li) != 0):
-                null_index_dict[name] = li
-        origin_df = req_df.copy()
-        origin_df.index = req_df[idx_col]
-        ema_df = req_df.copy()
-        ema_df.index = req_df[idx_col]
 
-        # denoise
-        com = 50
-        for name in data_col_list:
-            ema = pd.DataFrame(origin_df[name]).ewm(com).mean()
-            ema_df[name + '_denoised'] = ema[name]
-        denoised_column_list = []
-        for e in data_col_list:
-            denoised_column_list.append(e + '_denoised')
-        cor_dict = {}
-        for i in range(0, len(denoised_column_list)):
-            cor_dict[denoised_column_list[i]] = {}
-        for i in range(0, len(denoised_column_list)):
-            for j in range(i + 1, len(denoised_column_list)):
-                cor = pearsonr(ema_df[denoised_column_list[i]], ema_df[denoised_column_list[j]])[0]
-                cor_dict[denoised_column_list[i]][denoised_column_list[j]] = cor
-                cor_dict[denoised_column_list[j]][denoised_column_list[i]] = cor
-        res_df = req_df.copy()
-        for curr_col in null_index_dict:
-            lim = 0.3
-            ar = 100
-            curr_col_denoised = curr_col + '_denoised'
-            curr_dict = cor_dict[curr_col_denoised]
-            train_col = []
-            train_col.append(curr_col_denoised)
-            for key in curr_dict:
-                if (abs(curr_dict[key]) > lim):
-                    train_col.append(key)
-            train_df = ema_df[train_col]
+    na_df = req_df[req_df.isna().any(axis=1)]
+    interpolate_df = req_df.fillna(req_df.interpolate())
+    interpolate_df = interpolate_df.fillna(method="ffill")
+    interpolate_df = interpolate_df.fillna(method="bfill")
+    interpolate_df = interpolate_df.round(3)
+    na_df = interpolate_df.iloc[list(na_df.index)]
+    return to_response(date_time_column,req['column'], na_df)
+
+@app.post("/cleaning-api/missing-value/predict")
+async def predict(request: Request):
+    req = await request.json()
+    date_time_column = req['dateTimeColumn']
+    req_df = pd.json_normalize(req['data'])
+    if len(req_df) == 0:
+        raise HTTPException(status_code=400, detail="empty data")
+    new_col = list()
+    new_col.append(date_time_column)
+    for i in range(1, len(req_df.columns)):
+        new_col.append(req_df.columns[i].replace("value.", ""))
+    req_df.columns = new_col
+
+    na_df = req_df[req_df.isna().any(axis=1)]
+    column_df = pd.json_normalize(req['column'])
+    column_list = list(column_df['name'])
+
+    null_index_dict = {}
+    for name in column_list:
+        li = list(req_df[name][req_df[name].isnull()].index)
+        if (len(li) != 0):
+            null_index_dict[name] = li
+
+    origin_df = req_df.copy()
+    origin_df.index = req_df[date_time_column]
+    ema_df = req_df.copy()
+    ema_df.index = req_df[date_time_column]
+    # denoise
+    com = 100
+    for name in column_list:
+        ema = pd.DataFrame(origin_df[name]).ewm(com).mean()
+        ema_df[name + '_denoised'] = ema[name]
+    denoised_column_list = []
+    for e in column_list:
+        denoised_column_list.append(e + '_denoised')
+    ema_df = ema_df.fillna(method="ffill")
+    ema_df = ema_df.fillna(method="bfill")
+    cor_dict = {}
+    for i in range(0, len(denoised_column_list)):
+        cor_dict[denoised_column_list[i]] = {}
+    for i in range(0, len(denoised_column_list)):
+        for j in range(i + 1, len(denoised_column_list)):
+            cor = pearsonr(ema_df[denoised_column_list[i]], ema_df[denoised_column_list[j]])[0]
+            cor_dict[denoised_column_list[i]][denoised_column_list[j]] = cor
+            cor_dict[denoised_column_list[j]][denoised_column_list[i]] = cor
+    res_df = req_df.copy()
+
+    for curr_col in null_index_dict:
+        lim = 0.3
+        ar = 100
+        curr_col_denoised = curr_col + '_denoised'
+        curr_dict = cor_dict[curr_col_denoised]
+        train_col = []
+        train_col.append(curr_col_denoised)
+        for key in curr_dict:
+            if (abs(curr_dict[key]) > lim):
+                train_col.append(key)
+        train_df = ema_df[train_col]
+        if(len(train_df) < ar):
+            raise HTTPException(status_code=400, detail="The length of data must be at least 100.")
+        try:
             forecasting_model = VAR(train_df)
             results = forecasting_model.fit(ar)
-            for idx in null_index_dict[curr_col]:
-                y = train_df.values[idx - ar:idx]
-                test = ema_df.iloc[idx:idx+1,:]
-                forecast_res = pd.DataFrame(results.forecast(y=y, steps=1), index=test.index, columns=[train_col])
-                res_df.loc[idx, curr_col] = round(float(forecast_res[curr_col_denoised].iloc[0]),2)
-        na_df = res_df.iloc[list(na_df.index)]
-        save = df_to_response(req['column'], res_df)
-        run = df_to_response(req['column'], na_df)
-        res = {}
-        res['save'] = save
-        res['run'] = run
-        return res
-    elif(method==1):
-        interpolate_df = req_df.fillna(req_df.interpolate())
-        na_df = interpolate_df.iloc[list(na_df.index)]
-        save = df_to_response(req['column'], interpolate_df)
-        run = df_to_response(req['column'], na_df)
-        res = {}
-        res['save'] = save
-        res['run'] = run
-        return res
+        except:
+            raise HTTPException(status_code=400, detail="data contains one or more constant columns.")
 
-    else:
-        save = df_to_response(req['column'], req_df.dropna(axis=0))
-        run = df_to_response(req['column'], na_df.dropna(axis=0))
-        res = {}
-        res['save'] = save
-        res['run'] = run
-        return res
+        for idx in null_index_dict[curr_col]:
+            y = train_df.values[idx - ar:idx]
+            if idx-ar < 0:
+                res_df.loc[idx, curr_col] = round(ema_df.loc[res_df.loc[idx, date_time_column], curr_col_denoised],3)
+            else:
+                test = ema_df.iloc[idx:idx + 1, :]
+                forecast_res = pd.DataFrame(results.forecast(y=y, steps=1), index=test.index, columns=[train_col])
+                res_df.loc[idx, curr_col] = round(float(forecast_res[curr_col_denoised].iloc[0]), 3)
+
+    res_df = res_df.iloc[list(na_df.index)]
+    return to_response(date_time_column,req['column'], res_df)
+
 
 def to_response(date_time_column, column, df):
     data = list()
@@ -162,37 +180,17 @@ def to_response(date_time_column, column, df):
     res['data'] = data
     return res
 
-def df_to_response(column, df):
-    type_dict = {}
-    for col in column:
-        type_dict[col['name']] = col['type']
-    data = list()
-    for i in df.index:
-        obj = {}
-        for col in column:
-            if (df.loc[i, col['name']] is None):
-                obj[col['name']] = None
-            elif (type_dict[col['name']] == "INT"):
-                obj[col['name']] = int(df.loc[i, col['name']])
-            elif (type_dict[col['name']] == "DOUBLE"):
-                obj[col['name']] = float(df.loc[i, col['name']])
-            else:
-                obj[col['name']] = df.loc[i, col['name']]
-        data.append(obj)
-
-    res = {}
-    res['column'] = column
-    res['data'] = data
-    return res
-
 @app.post("/cleaning-api/pearson-correlation")
 async def pearson_correlation(request: Request):
     req = await request.json()
     req_df = pd.json_normalize(req['data'])
-    req_df =  req_df.fillna(req_df.interpolate())
-    req_df = req_df.dropna(axis=0)
-
-    print(req_df)
+    new_col = list()
+    for c in req_df.columns:
+        new_col.append(c.replace("value.", ""))
+    req_df.columns = new_col
+    req_df = req_df.fillna(req_df.interpolate())
+    req_df = req_df.fillna(method="ffill")
+    req_df = req_df.fillna(method="bfill")
     column_df = pd.json_normalize(req['column'])
     column_list = list(column_df['name'])
     cor_dict = {}
@@ -200,10 +198,6 @@ async def pearson_correlation(request: Request):
         cor_dict[column_list[i]] = {}
     for i in range(0, len(column_list)):
         for j in range(i + 1, len(column_list)):
-            if (column_list[i] not in req_df.columns or column_list[j] not in req_df.columns ):
-                cor_dict[column_list[i]][column_list[j]] = None
-                cor_dict[column_list[j]][column_list[i]] = None
-                continue
             cor = round(pearsonr(req_df[column_list[i]], req_df[column_list[j]])[0],3)
             cor_dict[column_list[i]][column_list[j]] = cor
             cor_dict[column_list[j]][column_list[i]] = cor
@@ -271,7 +265,7 @@ async def visualize(request: Request):
     return req_dict
 
 @app.post("/cleaning-api/denoise")
-async def delete_missing_value(request: Request, com: int):
+async def delete_missing_value(request: Request, com: int, datasetId: int):
     req = await request.json()
     date_time_column = req['dateTimeColumn']
     if len(req['denoiseColumn']) == 0:
@@ -285,6 +279,7 @@ async def delete_missing_value(request: Request, com: int):
     for i in range(1, len(req_df.columns)):
         new_col.append(req_df.columns[i].replace("value.", ""))
     denoise_col_list = list(denoise_col_df['name'])
+    origin_df = req_df.copy()
     req_df.columns = new_col
     req_df = req_df.fillna(method="ffill")
     req_df = req_df.fillna(method="bfill")
@@ -292,6 +287,17 @@ async def delete_missing_value(request: Request, com: int):
     ema_df[date_time_column] = req_df[date_time_column]
     for name in denoise_col_list:
         ema = pd.DataFrame(req_df[name]).ewm(com).mean()
-        ema_df[name] = ema[name]
-    print(req['column'])
-    return to_response(date_time_column, req['denoiseColumn'], ema_df)
+        ema_df[name] = ema[name].round(3)
+    column_df = pd.json_normalize(req['column'])
+    column_list = list(column_df['name'])
+    for name in column_list:
+        if name not in denoise_col_list:
+            ema_df[name] = origin_df["value."+name]
+
+    ema_df = ema_df.replace({np.nan: None})
+
+    res = to_response(date_time_column, req['column'], ema_df)
+    res['denoiseColumn'] = req['denoiseColumn']
+    return res
+
+
