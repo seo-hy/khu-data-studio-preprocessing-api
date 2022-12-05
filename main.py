@@ -1,9 +1,7 @@
 from fastapi import FastAPI, Request, HTTPException
-from typing import Union
 import pandas as pd
 import numpy as np
 import py_eureka_client.eureka_client as eureka_client
-from kafka import KafkaProducer
 
 from statsmodels.tsa.api import VAR
 
@@ -14,10 +12,6 @@ app = FastAPI()
 eureka_client.init(eureka_server="http://localhost:8761/eureka",
                                 app_name="preprocessing-api",
                                 instance_port=8083)
-producer = KafkaProducer(
-    bootstrap_servers=["localhost:9092"],
-    value_serializer=lambda x: x.encode("utf-8")
-)
 
 @app.get("/cleaning-api/test")
 async def test():
