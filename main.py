@@ -13,11 +13,11 @@ eureka_client.init(eureka_server="http://localhost:8761/eureka",
                                 app_name="preprocessing-api",
                                 instance_port=8083)
 
-@app.get("/cleaning-api/test")
+@app.get("/preprocessing-api/test")
 async def test():
     return {"message":"test"}
 
-@app.post("/cleaning-api/missing-value/find")
+@app.post("/preprocessing-api/missing-value/find")
 async def find_mv(request: Request):
     req = await request.json()
     date_time_column = req['dateTimeColumn']
@@ -38,7 +38,7 @@ async def find_mv(request: Request):
     return to_response(date_time_column,req['column'], na_df)
 
 
-@app.post("/cleaning-api/missing-value/delete")
+@app.post("/preprocessing-api/missing-value/delete")
 async def delete_missing_value(request: Request):
     req = await request.json()
     date_time_column = req['dateTimeColumn']
@@ -55,7 +55,8 @@ async def delete_missing_value(request: Request):
     res['deleteDate'] = list(na_df['created_at'])
     res['run'] = to_response(date_time_column, req['column'], na_df.dropna(axis=0))
     return res
-@app.post("/cleaning-api/missing-value/interpolate")
+
+@app.post("/preprocessing-api/missing-value/interpolate")
 async def interpolate(request: Request):
     req = await request.json()
     date_time_column = req['dateTimeColumn']
@@ -76,7 +77,7 @@ async def interpolate(request: Request):
     na_df = interpolate_df.iloc[list(na_df.index)]
     return to_response(date_time_column,req['column'], na_df)
 
-@app.post("/cleaning-api/missing-value/predict")
+@app.post("/preprocessing-api/missing-value/predict")
 async def predict(request: Request):
     req = await request.json()
     date_time_column = req['dateTimeColumn']
@@ -174,7 +175,7 @@ def to_response(date_time_column, column, df):
     res['data'] = data
     return res
 
-@app.post("/cleaning-api/pearson-correlation")
+@app.post("/preprocessing-api/pearson-correlation")
 async def pearson_correlation(request: Request):
     req = await request.json()
     req_df = pd.json_normalize(req['data'])
@@ -197,7 +198,7 @@ async def pearson_correlation(request: Request):
             cor_dict[column_list[j]][column_list[i]] = cor
     return cor_dict
 
-@app.post("/cleaning-api/std")
+@app.post("/preprocessing-api/std")
 async def std(request: Request):
     req = await request.json()
     req_df = pd.json_normalize(req['data'])
@@ -215,7 +216,7 @@ async def std(request: Request):
         std_dict[column_list[i]] = round(std[column_list[i]],3)
     return std_dict
 
-@app.post("/cleaning-api/mean")
+@app.post("/preprocessing-api/mean")
 async def mean(request: Request):
     req = await request.json()
     req_df = pd.json_normalize(req['data'])
@@ -234,7 +235,7 @@ async def mean(request: Request):
     return mean_dict
 
 
-@app.post("/cleaning-api/visualize")
+@app.post("/preprocessing-api/visualize")
 async def visualize(request: Request):
     req = await request.json()
     date_time_column = req['dateTimeColumn']
@@ -258,7 +259,8 @@ async def visualize(request: Request):
             req_dict[column_list[i]] = list(req_df[column_list[i]])
     return req_dict
 
-@app.post("/cleaning-api/denoise")
+
+@app.post("/preprocessing-api/denoise")
 async def delete_missing_value(request: Request, com: int, datasetId: int):
     req = await request.json()
     date_time_column = req['dateTimeColumn']
