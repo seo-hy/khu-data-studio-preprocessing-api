@@ -1,17 +1,28 @@
 from fastapi import FastAPI, Request, HTTPException
 import pandas as pd
 import numpy as np
-import py_eureka_client.eureka_client as eureka_client
-
+# import py_eureka_client.eureka_client as eureka_client
+from fastapi.middleware.cors import CORSMiddleware
 from statsmodels.tsa.api import VAR
 
 from scipy.stats import pearsonr
 
+
 app = FastAPI()
 
-eureka_client.init(eureka_server="http://localhost:8761/eureka",
-                                app_name="preprocessing-api",
-                                instance_port=8083)
+origins = ["*"]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# eureka_client.init(eureka_server="http://localhost:8761/eureka",
+#                                 app_name="preprocessing-api",
+#                                 instance_port=8083)
 
 @app.get("/preprocessing-api/test")
 async def test():
